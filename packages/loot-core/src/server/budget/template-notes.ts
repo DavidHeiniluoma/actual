@@ -1,3 +1,4 @@
+import { scheduleMatchesTemplate } from '#shared/schedules';
 import type { RefillTemplate, Template } from '#types/models/templates';
 
 import { storeTemplates } from './goal-template';
@@ -39,7 +40,6 @@ type CategoryWithTemplateNotes = {
 export async function checkTemplateNotes(): Promise<Notification> {
   const categoryWithTemplates = await getCategoriesWithTemplates();
   const schedules = await getActiveSchedules();
-  const scheduleNames = schedules.map(({ name }) => name);
   const errors: string[] = [];
 
   categoryWithTemplates.forEach(({ name, templates }) => {
@@ -51,12 +51,19 @@ export async function checkTemplateNotes(): Promise<Notification> {
         } else {
           errors.push(`${name}: ${template.line}`);
         }
-      } else if (
-        template.type === 'schedule' &&
-        template.name &&
-        !scheduleNames.includes(template.name)
-      ) {
-        errors.push(`${name}: Schedule "${template.name}" does not exist`);
+      } else if (template.type === 'schedule') {
+        const matches = schedules.filter(schedule =>
+          scheduleMatchesTemplate(schedule, template),
+        );
+        if (matches.length === 0) {
+          if (template.scheduleNameContains !== undefined) {
+            errors.push(
+              `${name}: No schedules contain "${template.scheduleNameContains}"`,
+            );
+          } else if (template.name) {
+            errors.push(`${name}: Schedule "${template.name}" does not exist`);
+          }
+        }
       }
     });
   });
@@ -198,12 +205,18 @@ function templateToLine(
       return result.trim();
     }
     case 'schedule': {
-      // schedule syntax: #template[-prio] schedule <name> [full] [ [increase/decrease N%] ]
+      // schedule syntax:
+      // - #template[-prio] schedule [full] <name> [[increase/decrease N%]]
+      // - #template[-prio] schedule [full] contains <text> [[increase/decrease N%]]
       let result = `${prefix} schedule`;
       if (template.full) {
         result += ' full';
       }
-      result += ` ${template.name}`;
+      if (template.scheduleNameContains !== undefined) {
+        result += ` contains ${template.scheduleNameContains}`;
+      } else {
+        result += ` ${template.name}`;
+      }
       if (template.adjustment !== undefined) {
         const adj = template.adjustment;
         const op = adj >= 0 ? 'increase' : 'decrease';

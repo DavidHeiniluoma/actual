@@ -64,6 +64,7 @@ export type ScheduleTemplate = {
   type: 'schedule';
   name?: string;
   scheduleId?: string;
+  scheduleNameContains?: string;
   full?: boolean;
   adjustment?: number;
   adjustmentType?: 'percent' | 'fixed';

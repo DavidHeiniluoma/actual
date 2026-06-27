@@ -18,6 +18,8 @@ expr
     { return { type: 'simple', monthly, limit, priority: template.priority, directive: template.directive }}
   / template: template _ limit: limit
     { return { type: 'simple', monthly: null, limit, priority: template.priority, directive: template.directive }}
+  / template: template _ schedule:schedule _ full:full? contains:containsScheduleName modifiers:modifiers?
+    { return { type: 'schedule', scheduleNameContains: contains.trim(), priority: template.priority, directive: template.directive, full, adjustment: modifiers?.adjustment, adjustmentType: modifiers?.adjustmentType  }}
   / template: template _ schedule:schedule _ full:full? name:rawScheduleName modifiers:modifiers?
     { return { type: 'schedule', name: name.trim(), priority: template.priority, directive: template.directive, full, adjustment: modifiers?.adjustment, adjustmentType: modifiers?.adjustmentType  }}
   / template: template _ remainder: remainder limit: limit?
@@ -75,6 +77,7 @@ starting = 'starting'i
 upTo = 'up'i _ 'to'i
 hold = 'hold'i {return true}
 schedule = 'schedule'i { return text() }
+containsScheduleName = 'contains'i _ text:rawScheduleName { return text }
 full = 'full'i _ {return true}
 priority = '-'i number: number {return number}
 remainder = 'remainder'i _? weight: positive? { return +weight || 1 }

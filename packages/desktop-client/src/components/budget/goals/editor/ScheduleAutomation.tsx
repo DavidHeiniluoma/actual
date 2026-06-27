@@ -1,6 +1,7 @@
 import { Trans, useTranslation } from 'react-i18next';
 
 import { useResponsive } from '@actual-app/components/hooks/useResponsive';
+import { Input } from '@actual-app/components/input';
 import { Select } from '@actual-app/components/select';
 import { SpaceBetween } from '@actual-app/components/space-between';
 import { Text } from '@actual-app/components/text';
@@ -32,6 +33,8 @@ export const ScheduleAutomation = ({
   const { t } = useTranslation();
   const { isNarrowWidth } = useResponsive();
   const fieldFlex = isNarrowWidth ? STACKED_FIELD_FLEX : 1;
+  const matchMode =
+    template.scheduleNameContains !== undefined ? 'contains' : 'single';
   // Match the filter applied to the Select options below — completed and
   // tombstoned schedules aren't selectable, so a category whose only
   // schedules are completed should fall through to the "no schedules" state
@@ -54,27 +57,84 @@ export const ScheduleAutomation = ({
         style={{ marginTop: 10 }}
       >
         <FormField style={{ flex: fieldFlex }}>
-          <FormLabel title={t('Schedule')} htmlFor="schedule-field" />
-          <Select
-            id="schedule-field"
-            key="schedule-picker"
-            defaultLabel={t('Select a schedule')}
-            value={
-              template.scheduleId ??
-              selectableSchedules.find(s => s.name === template.name)?.id
-            }
-            onChange={scheduleId => {
-              const picked = selectableSchedules.find(s => s.id === scheduleId);
-              dispatch(
-                updateTemplate({
-                  type: 'schedule',
-                  scheduleId,
-                  name: picked?.name ?? '',
-                }),
-              );
-            }}
-            options={selectableSchedules.map(s => [s.id, s.name] as const)}
+          <FormLabel
+            title={t('Link rule')}
+            htmlFor="schedule-match-mode-field"
           />
+          <Select
+            id="schedule-match-mode-field"
+            value={matchMode}
+            onChange={value =>
+              dispatch(
+                updateTemplate(
+                  value === 'contains'
+                    ? {
+                        type: 'schedule',
+                        scheduleId: undefined,
+                        name: undefined,
+                        scheduleNameContains: '',
+                      }
+                    : {
+                        type: 'schedule',
+                        scheduleNameContains: undefined,
+                      },
+                ),
+              )
+            }
+            options={[
+              ['single', t('One schedule')],
+              ['contains', t('Schedules whose names contain text')],
+            ]}
+          />
+        </FormField>
+        <FormField style={{ flex: fieldFlex }}>
+          {matchMode === 'contains' ? (
+            <>
+              <FormLabel
+                title={t('Schedule name contains')}
+                htmlFor="schedule-name-contains-field"
+              />
+              <Input
+                id="schedule-name-contains-field"
+                value={template.scheduleNameContains ?? ''}
+                placeholder={t('Example: #hmrc')}
+                onChangeValue={scheduleNameContains =>
+                  dispatch(
+                    updateTemplate({
+                      type: 'schedule',
+                      scheduleNameContains,
+                    }),
+                  )
+                }
+              />
+            </>
+          ) : (
+            <>
+              <FormLabel title={t('Schedule')} htmlFor="schedule-field" />
+              <Select
+                id="schedule-field"
+                key="schedule-picker"
+                defaultLabel={t('Select a schedule')}
+                value={
+                  template.scheduleId ??
+                  selectableSchedules.find(s => s.name === template.name)?.id
+                }
+                onChange={scheduleId => {
+                  const picked = selectableSchedules.find(
+                    s => s.id === scheduleId,
+                  );
+                  dispatch(
+                    updateTemplate({
+                      type: 'schedule',
+                      scheduleId,
+                      name: picked?.name ?? '',
+                    }),
+                  );
+                }}
+                options={selectableSchedules.map(s => [s.id, s.name] as const)}
+              />
+            </>
+          )}
         </FormField>
         <FormField style={{ flex: fieldFlex }}>
           <FormLabel title={t('Savings mode')} htmlFor="schedule-full-field" />

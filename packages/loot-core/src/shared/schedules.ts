@@ -4,9 +4,55 @@ import * as d from 'date-fns';
 
 import { Condition } from '#server/rules';
 import type { RuleConditionEntity, ScheduleEntity } from '#types/models';
+import type { ScheduleTemplate } from '#types/models/templates';
 
 import * as monthUtils from './months';
 import { q } from './query';
+
+export function scheduleNameContainsText(
+  scheduleName: string | null | undefined,
+  text: string | null | undefined,
+): boolean {
+  const normalizedScheduleName = scheduleName?.trim().toLowerCase();
+  const normalizedText = text?.trim().toLowerCase();
+  return !!normalizedScheduleName && !!normalizedText
+    ? normalizedScheduleName.includes(normalizedText)
+    : false;
+}
+
+export function scheduleMatchesTemplate(
+  schedule: {
+    id: ScheduleEntity['id'];
+    name?: ScheduleEntity['name'] | null;
+    completed?: ScheduleEntity['completed'] | number | null;
+    tombstone?: ScheduleEntity['tombstone'] | number | null;
+  },
+  template: Pick<
+    ScheduleTemplate,
+    'scheduleId' | 'name' | 'scheduleNameContains'
+  >,
+): boolean {
+  if (Boolean(schedule.completed) || Boolean(schedule.tombstone)) {
+    return false;
+  }
+
+  if (template.scheduleNameContains !== undefined) {
+    return scheduleNameContainsText(
+      schedule.name,
+      template.scheduleNameContains,
+    );
+  }
+
+  if (template.scheduleId) {
+    return schedule.id === template.scheduleId;
+  }
+
+  if (template.name) {
+    return schedule.name?.trim() === template.name.trim();
+  }
+
+  return false;
+}
 
 export function getStatus(
   nextDate: string,

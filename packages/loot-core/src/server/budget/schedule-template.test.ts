@@ -70,10 +70,17 @@ function makeRule({
   });
 }
 
-function mockSingleSchedule(spec: RuleSpec, completed: number = 0) {
-  vi.mocked(db.first).mockResolvedValue({ id: 1, completed });
-  vi.mocked(getRuleForSchedule).mockResolvedValue(makeRule(spec));
-  vi.mocked(isTrackingBudget).mockReturnValue(false);
+function mockSingleSchedule(
+  spec: RuleSpec,
+  completed: number = 0,
+  name: string = 'Test Schedule',
+) {
+  mockSchedulesByName({
+    [name]: {
+      spec,
+      completed,
+    },
+  });
 }
 
 function mockSchedulesByName(
@@ -83,14 +90,13 @@ function mockSchedulesByName(
   const sidByName: Record<string, number> = Object.fromEntries(
     names.map((name, i) => [name, i + 1]),
   );
-  vi.mocked(db.first).mockImplementation(
-    async (_q: string, params?: unknown[]) => {
-      const name = (params as string[] | undefined)?.[0] ?? '';
-      return {
-        id: sidByName[name],
-        completed: specsByName[name]?.completed ?? 0,
-      };
-    },
+  vi.mocked(db.all).mockResolvedValue(
+    names.map(name => ({
+      id: sidByName[name],
+      name,
+      completed: specsByName[name]?.completed ?? 0,
+      tombstone: 0,
+    })),
   );
   vi.mocked(getRuleForSchedule).mockImplementation(async id => {
     const name = names.find(n => sidByName[n] === Number(id)) ?? names[0];
@@ -200,6 +206,43 @@ describe('runSchedule', () => {
     expect(result.to_budget).toBe(10000);
   });
 
+  it('aggregates all schedules whose names contain the same text', async () => {
+    const template_lines = [
+      {
+        type: 'schedule',
+        scheduleNameContains: '#hmrc',
+        directive: 'template',
+        priority: 0,
+      } as const,
+    ];
+    mockSchedulesByName({
+      'VAT #hmrc': {
+        spec: { start: '2024-08-01', amount: -10000, frequency: 'monthly' },
+      },
+      'PAYE #hmrc': {
+        spec: { start: '2024-08-01', amount: -5000, frequency: 'monthly' },
+      },
+      Rent: {
+        spec: { start: '2024-08-01', amount: -9000, frequency: 'monthly' },
+      },
+    });
+
+    const result = await runSchedule(
+      template_lines,
+      '2024-08-01',
+      0,
+      0,
+      0,
+      0,
+      [],
+      defaultCategory,
+      defaultCurrency,
+    );
+
+    expect(result.perScheduleMonthly.get(template_lines[0])).toBe(15000);
+    expect(result.to_budget).toBe(15000);
+  });
+
   it('handles a pay-month-of monthly schedule alongside a yearly sinking schedule', async () => {
     const template_lines = [
       {
@@ -255,11 +298,15 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    mockSingleSchedule({
-      start: '2024-12-15',
-      amount: -60000,
-      frequency: 'yearly',
-    });
+    mockSingleSchedule(
+      {
+        start: '2024-12-15',
+        amount: -60000,
+        frequency: 'yearly',
+      },
+      0,
+      'Insurance',
+    );
 
     const result = await runSchedule(
       template_lines,
@@ -330,11 +377,15 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    mockSingleSchedule({
-      start: '2024-08-15',
-      amount: -10000,
-      frequency: 'monthly',
-    });
+    mockSingleSchedule(
+      {
+        start: '2024-08-15',
+        amount: -10000,
+        frequency: 'monthly',
+      },
+      0,
+      'Bill',
+    );
 
     const result = await runSchedule(
       template_lines,
@@ -361,11 +412,15 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    mockSingleSchedule({
-      start: '2024-08-15',
-      amount: -10000,
-      frequency: 'monthly',
-    });
+    mockSingleSchedule(
+      {
+        start: '2024-08-15',
+        amount: -10000,
+        frequency: 'monthly',
+      },
+      0,
+      'Bill',
+    );
 
     const result = await runSchedule(
       template_lines,
@@ -393,6 +448,7 @@ describe('runSchedule', () => {
     mockSingleSchedule(
       { start: '2024-08-15', amount: -10000, frequency: 'monthly' },
       1,
+      'Done',
     );
 
     const result = await runSchedule(
@@ -418,11 +474,15 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    mockSingleSchedule({
-      start: '2024-01-01',
-      amount: -100,
-      frequency: 'daily',
-    });
+    mockSingleSchedule(
+      {
+        start: '2024-01-01',
+        amount: -100,
+        frequency: 'daily',
+      },
+      0,
+      'Daily Bill',
+    );
 
     const result = await runSchedule(
       template_lines,
@@ -493,7 +553,15 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    vi.mocked(db.first).mockResolvedValue({ id: 1, completed: 0 });
+    mockSchedulesByName({
+      Past: {
+        spec: {
+          start: '2023-06-01',
+          amount: -10000,
+          frequency: 'monthly',
+        },
+      },
+    });
     vi.mocked(getRuleForSchedule).mockResolvedValue(
       new Rule({
         id: 'r',
@@ -506,7 +574,6 @@ describe('runSchedule', () => {
         actions: [],
       }),
     );
-    vi.mocked(isTrackingBudget).mockReturnValue(false);
 
     const result = await runSchedule(
       template_lines,
@@ -537,12 +604,16 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    mockSingleSchedule({
-      start: '2024-03-15',
-      amount: -20000,
-      frequency: 'monthly',
-      interval: 2,
-    });
+    mockSingleSchedule(
+      {
+        start: '2024-03-15',
+        amount: -20000,
+        frequency: 'monthly',
+        interval: 2,
+      },
+      0,
+      'BiMonthly',
+    );
 
     const result = await runSchedule(
       template_lines,
@@ -571,12 +642,16 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    mockSingleSchedule({
-      start: '2024-02-12',
-      amount: -6000,
-      frequency: 'weekly',
-      interval: 6,
-    });
+    mockSingleSchedule(
+      {
+        start: '2024-02-12',
+        amount: -6000,
+        frequency: 'weekly',
+        interval: 6,
+      },
+      0,
+      'EverySixWeeks',
+    );
 
     const result = await runSchedule(
       template_lines,
@@ -605,12 +680,16 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    mockSingleSchedule({
-      start: '2024-03-01',
-      amount: -6000,
-      frequency: 'daily',
-      interval: 60,
-    });
+    mockSingleSchedule(
+      {
+        start: '2024-03-01',
+        amount: -6000,
+        frequency: 'daily',
+        interval: 60,
+      },
+      0,
+      'EverySixtyDays',
+    );
 
     const result = await runSchedule(
       template_lines,
@@ -637,11 +716,15 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    mockSingleSchedule({
-      start: '2024-12-15',
-      amount: -12000,
-      frequency: 'yearly',
-    });
+    mockSingleSchedule(
+      {
+        start: '2024-12-15',
+        amount: -12000,
+        frequency: 'yearly',
+      },
+      0,
+      'Overfunded',
+    );
 
     const result = await runSchedule(
       template_lines,
@@ -670,7 +753,9 @@ describe('runSchedule', () => {
         priority: 0,
       } as const,
     ];
-    vi.mocked(db.first).mockResolvedValue({ id: 1, completed: 0 });
+    vi.mocked(db.all).mockResolvedValue([
+      { id: 1, name: 'YearlyFar', completed: 0, tombstone: 0 },
+    ]);
     vi.mocked(getRuleForSchedule).mockResolvedValue(
       makeRule({ start: '2024-12-15', amount: -12000, frequency: 'yearly' }),
     );

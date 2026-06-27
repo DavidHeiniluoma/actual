@@ -102,6 +102,15 @@ function scheduleTemplate(
   };
 }
 
+function scheduleContainsTemplate(scheduleNameContains: string): Template {
+  return {
+    type: 'schedule',
+    scheduleNameContains,
+    directive: 'template',
+    priority: 1,
+  };
+}
+
 function schedule(name: string): ScheduleEntity {
   return {
     id: name,
@@ -209,7 +218,47 @@ describe('validateAutomation adjustment range', () => {
         [],
         today,
       ),
-    ).toEqual({ kind: 'schedule-not-found', name: 'Rent' });
+    ).toEqual({ kind: 'schedule-not-found', name: 'Rent', mode: 'exact' });
+  });
+
+  it('accepts a schedule name contains match', () => {
+    expect(
+      validateAutomation(
+        scheduleContainsTemplate('#hmrc'),
+        'schedule',
+        [],
+        [schedule('VAT #hmrc June')],
+        today,
+      ),
+    ).toBeNull();
+  });
+
+  it('flags an empty schedule-name-contains filter', () => {
+    expect(
+      validateAutomation(
+        scheduleContainsTemplate('   '),
+        'schedule',
+        [],
+        [schedule('VAT #hmrc June')],
+        today,
+      ),
+    ).toEqual({ kind: 'schedule-filter-empty' });
+  });
+
+  it('reports when no schedules match a schedule-name-contains filter', () => {
+    expect(
+      validateAutomation(
+        scheduleContainsTemplate('#hmrc'),
+        'schedule',
+        [],
+        [schedule('Rent')],
+        today,
+      ),
+    ).toEqual({
+      kind: 'schedule-not-found',
+      name: '#hmrc',
+      mode: 'contains',
+    });
   });
 });
 

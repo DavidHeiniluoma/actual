@@ -1,11 +1,13 @@
 import * as monthUtils from '@actual-app/core/shared/months';
+import { scheduleMatchesTemplate } from '@actual-app/core/shared/schedules';
 import type { ScheduleEntity } from '@actual-app/core/types/models';
 import type { Template } from '@actual-app/core/types/models/templates';
 
 import type { DisplayTemplateType } from './constants';
 
 export type AutomationErrorKind =
-  | { kind: 'schedule-not-found'; name: string }
+  | { kind: 'schedule-not-found'; name: string; mode: 'exact' | 'contains' }
+  | { kind: 'schedule-filter-empty' }
   | { kind: 'refill-no-cap' }
   | { kind: 'limit-no-contributor' }
   | { kind: 'percentage-out-of-range'; percent: number }
@@ -48,16 +50,32 @@ export function validateAutomation(
   switch (displayType) {
     case 'schedule': {
       if (template.type !== 'schedule') return null;
-      if (!template.scheduleId && !template.name) {
-        return { kind: 'schedule-not-found', name: '' };
+      if (template.scheduleNameContains !== undefined) {
+        const query = template.scheduleNameContains.trim();
+        if (!query) {
+          return { kind: 'schedule-filter-empty' };
+        }
+        const match = schedules.find(s => scheduleMatchesTemplate(s, template));
+        if (!match) {
+          return {
+            kind: 'schedule-not-found',
+            name: query,
+            mode: 'contains',
+          };
+        }
+      } else if (!template.scheduleId && !template.name) {
+        return { kind: 'schedule-not-found', name: '', mode: 'exact' };
       }
-      const match = schedules.find(s =>
-        template.scheduleId
-          ? s.id === template.scheduleId
-          : s.name === template.name,
-      );
-      if (!match || match.completed || match.tombstone) {
-        return { kind: 'schedule-not-found', name: template.name ?? '' };
+      const match = schedules.find(s => scheduleMatchesTemplate(s, template));
+      if (
+        template.scheduleNameContains === undefined &&
+        (!match || match.completed || match.tombstone)
+      ) {
+        return {
+          kind: 'schedule-not-found',
+          name: template.name ?? '',
+          mode: 'exact',
+        };
       }
       if (isAdjustmentOutOfRange(template)) {
         return { kind: 'adjustment-out-of-range' };

@@ -403,8 +403,10 @@ describe('unparse/parse round-trip', () => {
     '#template-2 123.45',
     // schedule
     '#template schedule Rent',
+    '#template schedule contains #hmrc',
     '#template schedule full Mortgage',
     '#template schedule Netflix [increase 10%]',
+    '#template schedule full contains tax [increase 10%]',
     '#template schedule full Groceries [decrease 5%]',
     // percentage
     '#template 50% of Utilities',

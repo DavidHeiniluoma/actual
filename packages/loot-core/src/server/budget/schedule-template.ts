@@ -10,6 +10,7 @@ import {
   extractScheduleConds,
   getDateWithSkippedWeekend,
   getNextDate,
+  scheduleMatchesTemplate,
 } from '#shared/schedules';
 import { amountToInteger } from '#shared/util';
 import type { CategoryEntity, TransactionEntity } from '#types/models';
@@ -40,156 +41,126 @@ async function createScheduleList(
   const errors: string[] = [];
   const accounts = (await db.getAccounts()) ?? [];
   const accountsMap = new Map(accounts.map(a => [a.id, a]));
+  const activeSchedules = await db.all<
+    Pick<db.DbSchedule, 'id' | 'name' | 'completed' | 'tombstone'>
+  >('SELECT id, name, completed, tombstone FROM schedules WHERE tombstone = 0');
 
   for (const template of templates) {
-    // Prefer scheduleId so renames don't break the lookup; fall back to name
-    // for notes-source templates (and legacy ui-source data) that only carry
-    // the name.
-    const {
-      id: sid,
-      name: scheduleName,
-      completed,
-    } = await db.first<Pick<db.DbSchedule, 'id' | 'name' | 'completed'>>(
-      template.scheduleId
-        ? 'SELECT id, name, completed FROM schedules WHERE id = ? AND tombstone = 0'
-        : 'SELECT id, name, completed FROM schedules WHERE TRIM(name) = ? AND tombstone = 0',
-      [template.scheduleId ?? template.name],
+    const matchedSchedules = activeSchedules.filter(schedule =>
+      scheduleMatchesTemplate(schedule, template),
     );
-    const rule = await getRuleForSchedule(sid);
-    const conditions = rule.serialize().conditions;
-    const { date: dateConditions, amount: amountCondition } =
-      extractScheduleConds(conditions);
-    let scheduleAmount =
-      amountCondition.op === 'isbetween'
-        ? Math.round(amountCondition.value.num1 + amountCondition.value.num2) /
-          2
-        : amountCondition.value;
-    // Apply adjustment percentage if specified
-    if (template.adjustment !== undefined && template.adjustmentType) {
-      switch (template.adjustmentType) {
-        case 'percent': {
-          const adjustmentFactor = 1 + template.adjustment / 100;
-          scheduleAmount = scheduleAmount * adjustmentFactor;
-          break;
-        }
-        case 'fixed': {
-          const sign = scheduleAmount < 0 ? -1 : 1;
-          scheduleAmount +=
-            sign * amountToInteger(template.adjustment, currency.decimalPlaces);
-          break;
-        }
+    for (const { id: sid, name: scheduleName, completed } of matchedSchedules) {
+      const rule = await getRuleForSchedule(sid);
+      const conditions = rule.serialize().conditions;
+      const { date: dateConditions, amount: amountCondition } =
+        extractScheduleConds(conditions);
+      let scheduleAmount =
+        amountCondition.op === 'isbetween'
+          ? Math.round(
+              amountCondition.value.num1 + amountCondition.value.num2,
+            ) / 2
+          : amountCondition.value;
+      // Apply adjustment percentage if specified
+      if (template.adjustment !== undefined && template.adjustmentType) {
+        switch (template.adjustmentType) {
+          case 'percent': {
+            const adjustmentFactor = 1 + template.adjustment / 100;
+            scheduleAmount = scheduleAmount * adjustmentFactor;
+            break;
+          }
+          case 'fixed': {
+            const sign = scheduleAmount < 0 ? -1 : 1;
+            scheduleAmount +=
+              sign *
+              amountToInteger(template.adjustment, currency.decimalPlaces);
+            break;
+          }
 
-        default:
-        //no valid adjustment was found
+          default:
+          //no valid adjustment was found
+        }
       }
-    }
 
-    scheduleAmount = Math.round(scheduleAmount);
+      scheduleAmount = Math.round(scheduleAmount);
 
-    const next_date_string = getNextDate(
-      dateConditions,
-      monthUtils._parse(current_month),
-    );
+      const next_date_string = getNextDate(
+        dateConditions,
+        monthUtils._parse(current_month),
+      );
 
-    // Schedule templates call rule.execActions() on the rule attached to each
-    // schedule, so we prefetch balances and pass _balanceOfPrefetched here too.
-    // Without that, BALANCE_OF would behave wrong or always look empty for
-    // schedule rules.
-    const formulaStrings = collectFormulasFromActions(rule.actions);
+      const formulaStrings = collectFormulasFromActions(rule.actions);
 
-    // Use the schedule's next occurrence date so "balance as of this moment"
-    // matches the scheduled date; id/sort_order are unset so we don't exclude a
-    // non-existent transaction from the balance query.
-    const scheduleRuleContext: TransactionEntity = {
-      amount: scheduleAmount,
-      category: category.id,
-      subtransactions: [],
-      ...(next_date_string ? { date: next_date_string } : {}),
-      id: null,
-      sort_order: null,
-    } as TransactionEntity;
+      const scheduleRuleContext: TransactionEntity = {
+        amount: scheduleAmount,
+        category: category.id,
+        subtransactions: [],
+        ...(next_date_string ? { date: next_date_string } : {}),
+        id: null,
+        sort_order: null,
+      } as TransactionEntity;
 
-    const balanceOfPrefetched = await prefetchBalanceOfForTransaction(
-      scheduleRuleContext,
-      accountsMap,
-      formulaStrings,
-    );
+      const balanceOfPrefetched = await prefetchBalanceOfForTransaction(
+        scheduleRuleContext,
+        accountsMap,
+        formulaStrings,
+      );
 
-    const { amount: postRuleAmount, subtransactions } = rule.execActions({
-      ...scheduleRuleContext,
-      _balanceOfPrefetched: balanceOfPrefetched,
-    });
-    const categorySubtransactions = subtransactions?.filter(
-      t => t.category === category.id,
-    );
-
-    // Unless the current category is relevant to the schedule, target the post-rule amount.
-    const sign = category.is_income ? 1 : -1;
-    const target =
-      sign *
-      (categorySubtransactions?.length
-        ? categorySubtransactions.reduce((acc, t) => acc + t.amount, 0)
-        : (postRuleAmount ?? scheduleAmount));
-
-    const target_interval = dateConditions.value.interval
-      ? dateConditions.value.interval
-      : 1;
-    const target_frequency = dateConditions.value.frequency;
-    const isRepeating =
-      Object(dateConditions.value) === dateConditions.value &&
-      'frequency' in dateConditions.value;
-    const num_months = monthUtils.differenceInCalendarMonths(
-      next_date_string,
-      current_month,
-    );
-    const displayName = scheduleName ?? template.name ?? '';
-    if (num_months < 0) {
-      //non-repeating schedules could be negative
-      errors.push(`Schedule ${displayName} is in the Past.`);
-    } else {
-      t.push({
-        template,
-        target,
-        next_date_string,
-        target_interval,
-        target_frequency,
-        num_months,
-        completed,
-        //started,
-        full: template.full === null ? false : template.full,
-        repeat: isRepeating,
-        name: displayName,
+      const { amount: postRuleAmount, subtransactions } = rule.execActions({
+        ...scheduleRuleContext,
+        _balanceOfPrefetched: balanceOfPrefetched,
       });
-      if (!completed) {
-        if (isRepeating) {
-          let monthlyTarget = 0;
-          const nextMonth = monthUtils.addMonths(
-            current_month,
-            t[t.length - 1].num_months + 1,
-          );
-          let nextBaseDate = getNextDate(
-            dateConditions,
-            monthUtils._parse(current_month),
-            true,
-          );
-          let nextDate = dateConditions.value.skipWeekend
-            ? monthUtils.dayFromDate(
-                getDateWithSkippedWeekend(
-                  monthUtils._parse(nextBaseDate),
-                  dateConditions.value.weekendSolveMode,
-                ),
-              )
-            : nextBaseDate;
-          while (nextDate < nextMonth) {
-            monthlyTarget += -target;
-            const currentDate = nextBaseDate;
-            const oneDayLater = monthUtils.addDays(nextBaseDate, 1);
-            nextBaseDate = getNextDate(
+      const categorySubtransactions = subtransactions?.filter(
+        t => t.category === category.id,
+      );
+
+      const sign = category.is_income ? 1 : -1;
+      const target =
+        sign *
+        (categorySubtransactions?.length
+          ? categorySubtransactions.reduce((acc, t) => acc + t.amount, 0)
+          : (postRuleAmount ?? scheduleAmount));
+
+      const target_interval = dateConditions.value.interval
+        ? dateConditions.value.interval
+        : 1;
+      const target_frequency = dateConditions.value.frequency;
+      const isRepeating =
+        Object(dateConditions.value) === dateConditions.value &&
+        'frequency' in dateConditions.value;
+      const num_months = monthUtils.differenceInCalendarMonths(
+        next_date_string,
+        current_month,
+      );
+      const displayName =
+        scheduleName ?? template.name ?? template.scheduleNameContains ?? '';
+      if (num_months < 0) {
+        errors.push(`Schedule ${displayName} is in the Past.`);
+      } else {
+        t.push({
+          template,
+          target,
+          next_date_string,
+          target_interval,
+          target_frequency,
+          num_months,
+          completed,
+          full: template.full === null ? false : template.full,
+          repeat: isRepeating,
+          name: displayName,
+        });
+        if (!completed) {
+          if (isRepeating) {
+            let monthlyTarget = 0;
+            const nextMonth = monthUtils.addMonths(
+              current_month,
+              t[t.length - 1].num_months + 1,
+            );
+            let nextBaseDate = getNextDate(
               dateConditions,
-              monthUtils._parse(oneDayLater),
+              monthUtils._parse(current_month),
               true,
             );
-            nextDate = dateConditions.value.skipWeekend
+            let nextDate = dateConditions.value.skipWeekend
               ? monthUtils.dayFromDate(
                   getDateWithSkippedWeekend(
                     monthUtils._parse(nextBaseDate),
@@ -197,21 +168,38 @@ async function createScheduleList(
                   ),
                 )
               : nextBaseDate;
-            const diffDays = monthUtils.differenceInCalendarDays(
-              nextBaseDate,
-              currentDate,
-            );
-            if (!diffDays) {
-              // This can happen if the schedule has an end condition.
-              break;
+            while (nextDate < nextMonth) {
+              monthlyTarget += -target;
+              const currentDate = nextBaseDate;
+              const oneDayLater = monthUtils.addDays(nextBaseDate, 1);
+              nextBaseDate = getNextDate(
+                dateConditions,
+                monthUtils._parse(oneDayLater),
+                true,
+              );
+              nextDate = dateConditions.value.skipWeekend
+                ? monthUtils.dayFromDate(
+                    getDateWithSkippedWeekend(
+                      monthUtils._parse(nextBaseDate),
+                      dateConditions.value.weekendSolveMode,
+                    ),
+                  )
+                : nextBaseDate;
+              const diffDays = monthUtils.differenceInCalendarDays(
+                nextBaseDate,
+                currentDate,
+              );
+              if (!diffDays) {
+                break;
+              }
             }
+            t[t.length - 1].target = -monthlyTarget;
           }
-          t[t.length - 1].target = -monthlyTarget;
+        } else {
+          errors.push(
+            `Schedule ${displayName} is not active during the month in question.`,
+          );
         }
-      } else {
-        errors.push(
-          `Schedule ${displayName} is not active during the month in question.`,
-        );
       }
     }
   }

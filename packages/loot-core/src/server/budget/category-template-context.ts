@@ -4,6 +4,7 @@ import { getCurrency } from '#shared/currencies';
 import type { Currency } from '#shared/currencies';
 import * as monthUtils from '#shared/months';
 import { q } from '#shared/query';
+import { scheduleMatchesTemplate } from '#shared/schedules';
 import { amountToInteger, integerToAmount } from '#shared/util';
 import type { CategoryEntity } from '#types/models';
 import type {
@@ -480,24 +481,22 @@ export class CategoryTemplateContext {
     }
     //check schedule existence (prefer scheduleId, fall back to name)
     const activeSchedules = await getActiveSchedules();
-    const scheduleIds = new Set(activeSchedules.map(s => s.id));
-    const scheduleNames = new Set(
-      activeSchedules.map(s => s.name?.trim()).filter(Boolean),
-    );
     templates
       .filter(t => t.type === 'schedule')
       .forEach(t => {
-        if (t.scheduleId) {
-          if (!scheduleIds.has(t.scheduleId)) {
+        const matches = activeSchedules.filter(schedule =>
+          scheduleMatchesTemplate(schedule, t),
+        );
+        if (matches.length === 0) {
+          if (t.scheduleNameContains !== undefined) {
             throw new Error(
-              `Schedule ${t.name ?? t.scheduleId} does not exist`,
+              `No schedules contain ${t.scheduleNameContains.trim()}`,
             );
           }
-        } else if (t.name) {
-          if (!scheduleNames.has(t.name.trim())) {
-            throw new Error(`Schedule ${t.name.trim()} does not exist`);
+          if (t.name || t.scheduleId) {
+            const label = t.name ?? t.scheduleId;
+            throw new Error(`Schedule ${label?.trim()} does not exist`);
           }
-        } else {
           throw new Error('Schedule template has no scheduleId or name');
         }
       });

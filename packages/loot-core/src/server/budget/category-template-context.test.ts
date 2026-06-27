@@ -1973,6 +1973,24 @@ describe('CategoryTemplateContext', () => {
       ).rejects.toThrow(/Schedule Internet does not exist/);
     });
 
+    it('accepts a schedule template that matches multiple schedules by name text', async () => {
+      vi.mocked(statements.getActiveSchedules).mockResolvedValue([
+        { name: 'VAT #hmrc', id: 's1', completed: 0, tombstone: 0 },
+        { name: 'PAYE #hmrc', id: 's2', completed: 0, tombstone: 0 },
+      ] as Awaited<ReturnType<typeof statements.getActiveSchedules>>);
+      const templates: Template[] = [
+        {
+          type: 'schedule',
+          scheduleNameContains: '#hmrc',
+          directive: 'template',
+          priority: 1,
+        },
+      ];
+      await expect(
+        CategoryTemplateContext.init(templates, category, '2024-01', 0),
+      ).resolves.toBeInstanceOf(CategoryTemplateContext);
+    });
+
     it('throws when schedule and by templates have mismatched priorities', async () => {
       vi.mocked(statements.getActiveSchedules).mockResolvedValue([
         { name: 'Rent', id: 's1' },

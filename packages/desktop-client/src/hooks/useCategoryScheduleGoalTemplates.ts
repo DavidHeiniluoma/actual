@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { scheduleMatchesTemplate } from '@actual-app/core/shared/schedules';
 import type { ScheduleStatuses } from '@actual-app/core/shared/schedules';
 import type {
   CategoryEntity,
@@ -14,6 +15,7 @@ type ScheduleGoalDefinition = {
   type: 'schedule';
   name?: ScheduleEntity['name'];
   scheduleId?: ScheduleEntity['id'];
+  scheduleNameContains?: string;
 };
 
 type UseCategoryScheduleGoalTemplatesProps = {
@@ -70,9 +72,7 @@ export function useCategoryScheduleGoalTemplates({
     }
 
     const schedules = allSchedules.filter(s =>
-      scheduleGoalDefinitions.some(g =>
-        g.scheduleId ? g.scheduleId === s.id : g.name === s.name,
-      ),
+      scheduleGoalDefinitions.some(g => scheduleMatchesTemplate(s, g)),
     );
 
     const scheduleIds = new Set(schedules.map(s => s.id));

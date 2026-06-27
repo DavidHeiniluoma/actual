@@ -17,6 +17,8 @@ export function AutomationErrorTitle({
   switch (error.kind) {
     case 'schedule-not-found':
       return <Trans>Schedule not found</Trans>;
+    case 'schedule-filter-empty':
+      return <Trans>Schedule filter missing</Trans>;
     case 'refill-no-cap':
       return <Trans>Refill needs a balance cap</Trans>;
     case 'limit-no-contributor':
@@ -51,11 +53,16 @@ export function AutomationErrorShort({
   const locale = useLocale();
   switch (error.kind) {
     case 'schedule-not-found':
-      return error.name ? (
-        <Trans>No schedule named &ldquo;{{ name: error.name }}&rdquo;</Trans>
+      if (!error.name) {
+        return <Trans>Pick a schedule</Trans>;
+      }
+      return error.mode === 'contains' ? (
+        <Trans>No schedules contain &ldquo;{{ name: error.name }}&rdquo;</Trans>
       ) : (
-        <Trans>Pick a schedule</Trans>
+        <Trans>No schedule named &ldquo;{{ name: error.name }}&rdquo;</Trans>
       );
+    case 'schedule-filter-empty':
+      return <Trans>Enter text to match schedules</Trans>;
     case 'refill-no-cap':
       return <Trans>Add a balance cap</Trans>;
     case 'limit-no-contributor':
@@ -97,8 +104,16 @@ export function AutomationErrorDetail({
     case 'schedule-not-found':
       return (
         <Trans>
-          Pick an existing schedule, or create one in Schedules. This automation
-          can&rsquo;t run until it&rsquo;s linked to a schedule.
+          {error.mode === 'contains'
+            ? "Enter text that matches at least one active schedule name. This automation can't run until it matches a schedule."
+            : "Pick an existing schedule, or create one in Schedules. This automation can't run until it's linked to a schedule."}
+        </Trans>
+      );
+    case 'schedule-filter-empty':
+      return (
+        <Trans>
+          Enter text such as "#hmrc" to match every active schedule whose name
+          contains it.
         </Trans>
       );
     case 'refill-no-cap':
